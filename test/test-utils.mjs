@@ -1,10 +1,16 @@
 // StarUML Controller Regression Test Utilities
 // Shared HTTP client, TestContext, and HTML reporter
 
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 
-const BASE_URL = 'http://localhost:12345';
+// Connection settings come from the same environment variables as the MCP servers.
+const BASE_URL = `http://${process.env.STARUML_HOST || 'localhost'}:${process.env.STARUML_PORT || '12345'}`;
+const PASSWORD = process.env.STARUML_PASSWORD;
+if (!PASSWORD) {
+  console.error('STARUML_PASSWORD is not set. Set it to the password shown when the StarUML Controller server was started.');
+  process.exit(2);
+}
 
 // --- URL-encode IDs for path parameters ---
 export function encId(id) {
@@ -14,7 +20,7 @@ export function encId(id) {
 // --- HTTP helpers ---
 async function request(method, path, body) {
   const url = `${BASE_URL}${path}`;
-  const opts = { method, headers: {} };
+  const opts = { method, headers: { Authorization: `Bearer ${PASSWORD}` } };
   if (body !== undefined) {
     opts.headers['Content-Type'] = 'application/json';
     opts.body = JSON.stringify(body);
@@ -93,12 +99,12 @@ export class TestContext {
     const step = this._begin(label || 'Export diagram');
     try {
       await new Promise(r => setTimeout(r, 600));
-      await apiPost(`/api/diagrams/${encId(diagramId)}/export`, {
-        path: imgPath,
-        format: 'png',
-      });
-      if (!existsSync(imgPath)) throw new Error(`Image not found: ${imgPath}`);
-      const buf = readFileSync(imgPath);
+      // The controller returns the image in the response; it never writes to a client path.
+      const res = await apiPost(`/api/diagrams/${encId(diagramId)}/export`, { format: 'png' });
+      const file = res.data?.file;
+      if (!file || file.encoding !== 'base64' || !file.content) throw new Error('No image in export response');
+      const buf = Buffer.from(file.content, 'base64');
+      writeFileSync(imgPath, buf);
       step.image = buf.toString('base64');
       step.status = 'pass';
       return imgPath;
